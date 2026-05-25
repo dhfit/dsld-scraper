@@ -1,0 +1,53 @@
+name: DSLD Label Scraper
+
+on:
+  workflow_dispatch:      # manual trigger
+  schedule:
+    - cron: '0 */5 * * *' # every 5 hours automatically
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 290   # just under 5 hours
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Restore checkpoint + CSVs from cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            dsld_label_checkpoint.json
+            dsld_products_full.csv
+            dsld_ingredients_full.csv
+          key: dsld-progress-${{ github.run_id }}
+          restore-keys: |
+            dsld-progress-
+
+      - name: Show resume state
+        run: |
+          if [ -f dsld_label_checkpoint.json ]; then
+            echo "Checkpoint found — resuming"
+            python3 -c "import json; d=json.load(open('dsld_label_checkpoint.json')); print(f\"  {len(d['done'])} IDs already done\")"
+          else
+            echo "No checkpoint — starting fresh"
+          fi
+          echo "IDs file: $(wc -l < dsld_ids.txt) lines"
+
+      - name: Run scraper
+        run: node dsld_label_scraper.mjs
+
+      - name: Upload CSVs as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsld-csvs-run-${{ github.run_number }}
+          path: |
+            dsld_products_full.csv
+            dsld_ingredients_full.csv
+          retention-days: 30
+          if-no-files-found: ignore
