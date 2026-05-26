@@ -1,14 +1,18 @@
-name: DSLD Label Scraper
+name: DSLD Label Scraper (20 shards)
 
 on:
-  workflow_dispatch:      # manual trigger
+  workflow_dispatch:
   schedule:
-    - cron: '0 */5 * * *' # every 5 hours automatically
+    - cron: '0 */5 * * *'   # re-runs every 5h until all shards complete
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 290   # just under 5 hours
+    timeout-minutes: 290
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]
 
     steps:
       - uses: actions/checkout@v4
@@ -17,37 +21,94 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Restore checkpoint + CSVs from cache
+      - name: Restore shard cache
         uses: actions/cache@v4
         with:
           path: |
-            dsld_label_checkpoint.json
-            dsld_products_full.csv
-            dsld_ingredients_full.csv
-          key: dsld-progress-${{ github.run_id }}
+            dsld_checkpoint_shard_${{ matrix.shard }}.json
+            dsld_products_shard_${{ matrix.shard }}.csv
+            dsld_ingredients_shard_${{ matrix.shard }}.csv
+          key: dsld-shard-${{ matrix.shard }}-${{ github.run_id }}
           restore-keys: |
-            dsld-progress-
+            dsld-shard-${{ matrix.shard }}-
 
-      - name: Show resume state
+      - name: Show shard state
         run: |
-          if [ -f dsld_label_checkpoint.json ]; then
-            echo "Checkpoint found — resuming"
-            python3 -c "import json; d=json.load(open('dsld_label_checkpoint.json')); print(f\"  {len(d['done'])} IDs already done\")"
+          SHARD=${{ matrix.shard }}
+          CP="dsld_checkpoint_shard_${SHARD}.json"
+          if [ -f "$CP" ]; then
+            DONE=$(python3 -c "import json; d=json.load(open('$CP')); print(len(d['done']))")
+            echo "Shard $SHARD: $DONE IDs already done"
           else
-            echo "No checkpoint — starting fresh"
+            echo "Shard $SHARD: starting fresh"
           fi
-          echo "IDs file: $(wc -l < dsld_ids.txt) lines"
 
-      - name: Run scraper
+      - name: Run shard
+        env:
+          SHARD_INDEX: ${{ matrix.shard }}
+          TOTAL_SHARDS: 20
         run: node dsld_label_scraper.mjs
 
-      - name: Upload CSVs as artifact
+      - name: Upload shard CSVs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dsld-csvs-run-${{ github.run_number }}
+          name: shard-${{ matrix.shard }}-run-${{ github.run_number }}
+          path: |
+            dsld_products_shard_${{ matrix.shard }}.csv
+            dsld_ingredients_shard_${{ matrix.shard }}.csv
+          retention-days: 30
+          if-no-files-found: ignore
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: scrape
+    if: always()
+
+    steps:
+      - name: Download all shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: shard-*-run-${{ github.run_number }}
+          merge-multiple: true
+
+      - name: Merge CSVs
+        run: |
+          # Products
+          PROD_OUT="dsld_products_full.csv"
+          FIRST=1
+          for f in dsld_products_shard_*.csv; do
+            [ -f "$f" ] || continue
+            if [ $FIRST -eq 1 ]; then
+              cat "$f" > "$PROD_OUT"
+              FIRST=0
+            else
+              tail -n +2 "$f" >> "$PROD_OUT"
+            fi
+          done
+
+          # Ingredients
+          ING_OUT="dsld_ingredients_full.csv"
+          FIRST=1
+          for f in dsld_ingredients_shard_*.csv; do
+            [ -f "$f" ] || continue
+            if [ $FIRST -eq 1 ]; then
+              cat "$f" > "$ING_OUT"
+              FIRST=0
+            else
+              tail -n +2 "$f" >> "$ING_OUT"
+            fi
+          done
+
+          echo "Products rows: $(wc -l < $PROD_OUT)"
+          echo "Ingredients rows: $(wc -l < $ING_OUT)"
+
+      - name: Upload merged CSVs
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsld-final-run-${{ github.run_number }}
           path: |
             dsld_products_full.csv
             dsld_ingredients_full.csv
-          retention-days: 30
+          retention-days: 90
           if-no-files-found: ignore
