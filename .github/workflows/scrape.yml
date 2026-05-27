@@ -1,4 +1,4 @@
-name: DSLD Label Scraper (30 shards)
+name: DSLD Label Scraper (20 shards)
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       max-parallel: 5
       matrix:
-        shard: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29]
+        shard: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]
 
     steps:
       - uses: actions/checkout@v4
@@ -33,9 +33,9 @@ jobs:
             dsld_checkpoint_shard_${{ matrix.shard }}.json
             dsld_products_shard_${{ matrix.shard }}.csv
             dsld_ingredients_shard_${{ matrix.shard }}.csv
-          key: dsld-30s-shard-${{ matrix.shard }}-${{ github.run_id }}
+          key: dsld-shard-${{ matrix.shard }}-${{ github.run_id }}
           restore-keys: |
-            dsld-30s-shard-${{ matrix.shard }}-
+            dsld-shard-${{ matrix.shard }}-
 
       - name: Show shard state
         run: |
@@ -51,7 +51,7 @@ jobs:
       - name: Run shard
         env:
           SHARD_INDEX: ${{ matrix.shard }}
-          TOTAL_SHARDS: 30
+          TOTAL_SHARDS: 20
         run: node dsld_label_scraper.mjs
 
       - name: Upload shard CSVs
@@ -110,7 +110,6 @@ jobs:
           echo "Products rows (incl header): $PROD_ROWS"
           echo "Ingredients rows (incl header): $ING_ROWS"
 
-          # Warn if significantly fewer than expected
           if [ "$PROD_ROWS" -lt 100000 ]; then
             echo "WARNING: fewer than 100k product rows — some shards may be incomplete"
           fi
