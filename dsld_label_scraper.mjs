@@ -15,7 +15,7 @@ const TOTAL_SHARDS = parseInt(process.env.TOTAL_SHARDS ?? '1', 10);
 const OUT_PROD     = `./dsld_products_shard_${SHARD}.csv`;
 const OUT_ING      = `./dsld_ingredients_shard_${SHARD}.csv`;
 const CHECKPOINT   = `./dsld_checkpoint_shard_${SHARD}.json`;
-const DELAY_MS     = 1100;
+const DELAY_MS     = 1500;
 const CHECKPOINT_EVERY = 250;
 
 // ─── CSV helpers ──────────────────────────────────────────────────────────────
