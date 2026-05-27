@@ -18,6 +18,10 @@ const CHECKPOINT   = `./dsld_checkpoint_shard_${SHARD}.json`;
 const DELAY_MS     = 1500;
 const CHECKPOINT_EVERY = 250;
 
+// Stop this many ms before the job timeout so the process exits cleanly,
+// letting the post-job cache-save step always run. Job timeout = 290 min.
+const GRACEFUL_STOP_MS = 265 * 60 * 1000;
+
 // ─── CSV helpers ──────────────────────────────────────────────────────────────
 
 function cell(val) {
@@ -145,6 +149,7 @@ async function fetchLabel(id, retries = 8) {
 // ─── main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
+  const JOB_START = Date.now();
   console.log(`=== DSLD Scraper — Shard ${SHARD}/${TOTAL_SHARDS} ===`);
 
   // Load all IDs and slice this shard's portion
@@ -164,7 +169,7 @@ async function main() {
   console.log(`Pending: ${pending.length}\n`);
   if (pending.length === 0) { console.log('Shard complete!'); return; }
 
-  // Open output files
+  // Open output files (append if CSV already exists from a prior run)
   const prodExists = fs.existsSync(OUT_PROD) && fs.statSync(OUT_PROD).size > 0;
   const ingExists  = fs.existsSync(OUT_ING)  && fs.statSync(OUT_ING).size  > 0;
   const prodWriter = fs.createWriteStream(OUT_PROD, { flags: prodExists ? 'a' : 'w', encoding: 'utf8' });
@@ -174,8 +179,18 @@ async function main() {
 
   let processed = 0, errors = 0, sinceCheckpoint = 0;
   const startTime = Date.now();
+  let timedOut = false;
 
   for (const id of pending) {
+    // Graceful early exit: stop 25 min before job timeout so post-job cache
+    // save always runs. Without this the job is force-killed mid-run and the
+    // checkpoint is lost, wasting the entire run's work.
+    if (Date.now() - JOB_START >= GRACEFUL_STOP_MS) {
+      console.log(`\n\nApproaching time limit (265 min) — saving checkpoint and stopping gracefully.`);
+      timedOut = true;
+      break;
+    }
+
     const data = await fetchLabel(id);
     await sleep(DELAY_MS);
 
@@ -205,7 +220,12 @@ async function main() {
 
   fs.writeFileSync(CHECKPOINT, JSON.stringify({ done: [...done] }));
   prodWriter.end(); ingWriter.end();
-  console.log(`\n\n=== Shard ${SHARD} DONE === processed: ${processed}, errors: ${errors}`);
+
+  if (timedOut) {
+    console.log(`\n=== Shard ${SHARD} PAUSED (time limit) === processed this run: ${processed}, total done: ${done.size}/${shardIds.length}, errors: ${errors}`);
+  } else {
+    console.log(`\n\n=== Shard ${SHARD} DONE === processed: ${processed}, errors: ${errors}`);
+  }
 }
 
 main().catch(err => { console.error('Fatal:', err); process.exit(1); });
